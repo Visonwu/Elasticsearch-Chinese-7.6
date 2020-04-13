@@ -1,0 +1,132 @@
+# Has child 查询
+
+返回其父级子文档与提供的查询匹配的父级文档。 您可以使用联接字段映射在同一索引中的文档之间创建父子关系。
+
+> 注意：因为执行连接，所以has_child与其他查询相比速度较慢。 随着指向唯一父文档的匹配子文档数量的增加，其性能会下降。 搜索中的每个has_child查询都会大大增加查询时间。
+>
+> 如果您关心查询性能，请不要使用此查询。 如果需要使用has_child查询，请尽可能少使用。
+
+
+
+## 1.1 请求案例
+
+**索引创建**
+
+要使用has_child查询，您的索引必须包含一个联接字段映射。 例如：
+
+```json
+PUT /my_index
+{
+    "mappings": {
+        "properties" : {
+            "my-join-field" : {
+                "type" : "join",
+                "relations": {
+                    "parent": "child"
+                }
+            }
+        }
+    }
+}
+```
+
+**举例查询**
+
+```json
+GET /_search
+{
+    "query": {
+        "has_child" : {
+            "type" : "child",
+            "query" : {
+                "match_all" : {}
+            },
+            "max_children": 10,
+            "min_children": 2,
+            "score_mode" : "min"
+        }
+    }
+}
+```
+
+
+
+## 1.2 has_child的高级参数
+
+**`type`**
+
+​	（必需，字符串）为[join](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/parent-join.html)字段映射的子关系的名称。
+
+**`query`**
+
+（必需，查询对象）查询您希望在“type”字段的子文档上运行的查询。 如果子文档与搜索匹配，则查询返回父文档。
+
+**`ignore_unmapped`**
+
+（可选，布尔值）指示是否忽略未映射的“type”而不返回任何文档而不是错误。 默认为`false`。
+
+  如果为false，则在未映射type的情况下，Elasticsearch返回错误。
+
+  您可以使用此参数查询可能不包含“ type”的多个索引。
+
+**`max_children`**
+
+（可选，整数）与返回的父文档所允许的“查询”相匹配的子文档的最大数量。 如果父文档超出此限制，则将其从搜索结果中排除。
+
+**`min_children`**
+
+（可选，整数）与为返回的父文档的查询匹配而需要的“ query”子查询的子文档的最小数量。 如果父文档不满足此限制，则将其从搜索结果中排除。
+
+**`score_mode`**
+
+（可选，字符串）指示匹配子文档的分数如何影响根父文档的[相关性分数](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/query-filter-context.html#relevance-scores)。 有效值为：
+
+- **`none` (Default)**
+
+  不要使用匹配的子文档的相关性分数。 该查询为父文档分配得分“ 0”。
+
+- **`avg`**
+
+  使用所有匹配的子文档的平均相关性得分
+
+- **`max`**
+
+  使用所有匹配的子文档中的最高相关性得分。
+
+- **`min`**
+
+  使用所有匹配的子文档中最低的相关性得分。
+
+  **`sum`**
+
+  将所有匹配的子文档的相关性得分相加。
+
+
+
+## 1.3 Notes
+
+### 1) sorting
+
+您不能使用标准[排序选项](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/search-request-body.html#request-body-search-sort)对has_child查询的结果进行排序。
+
+如果需要按子文档中的字段对返回的文档进行排序，请使用`function_score`查询并按`_score`进行排序。 例如，以下查询按其子文档的`click_count`字段对返回的文档进行排序。
+
+```json
+GET /_search
+{
+    "query": {
+        "has_child" : {
+            "type" : "child",
+            "query" : {
+                "function_score" : {
+                    "script_score": {
+                        "script": "_score * doc['click_count'].value"
+                    }
+                }
+            },
+            "score_mode" : "max"
+        }
+    }
+}
+```
+
