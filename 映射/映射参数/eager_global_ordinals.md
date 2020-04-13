@@ -16,6 +16,54 @@
 
 ---待修正
 
-> 注：全局序号 映射是堆上的数据结构。 在测量内存使用情况时，Elasticsearch将来自全局序号的内存作为字段数据进行计数。 全局序号内存被包含在[fielddata circuit breaker](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/circuit-breaker.html#fielddata-circuit-breaker)中，并在[node stats](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/cluster-nodes-stats.html)信息响应中的fielddata下返回。
+> 注：全局序号 映射是堆上的数据结构。 在测量内存使用情况时，Elasticsearch将来自全局序号的内存作为fielddata进行计数。 全局序号内存被包含在[fielddata circuit breaker](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/circuit-breaker.html#fielddata-circuit-breaker)中，并在[node stats](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/cluster-nodes-stats.html)信息响应中的fielddata返回。
 
-The global ordinal mapping is an on-heap data structure. When measuring memory usage, Elasticsearch counts the memory from global ordinals as *fielddata*. Global ordinals memory is included in the [fielddata circuit breaker](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/circuit-breaker.html#fielddata-circuit-breaker), and is returned under `fielddata` in the [node stats](https://www.elastic.co/guide/en/elasticsearch/reference/7.6/cluster-nodes-stats.html) response.
+
+
+## 1.2 加载global ordinals
+
+必须先建立全局序数映射，然后才能在搜索过程中使用序数。 默认情况下，映射是在第一次需要全局序号时在搜索过程中加载的。 如果您正在优化索引速度，那么这是正确的方法，但是如果要优先考虑搜索性能，建议您急切地将全局序号加载到将用于聚合的字段上：
+
+```json
+PUT my_index/_mapping
+{
+  "properties": {
+    "tags": {
+      "type": "keyword",
+      "eager_global_ordinals": true
+    }
+  }
+}
+```
+
+启用eager_global_ordinals时，会在刷新分片时构建全局序号。— Elasticsearch始终在暴露索引内容更改之前加载它们。 这将构建全局索引的成本从搜索转移到了索引时间。 当创建新的分片副本时，Elasticsearch也会急于建立全局序号，这可能会在增加副本数量或将分片重新放置到新节点上时发生。
+
+可以随时通过更新eager_global_ordinals设置来禁用预先加载：
+
+```json
+PUT my_index/_mapping
+{
+  "properties": {
+    "tags": {
+      "type": "keyword",
+      "eager_global_ordinals": false
+    }
+  }
+}
+```
+
+> 重要：
+>
+> 在[冻结索引](https://www.elastic.co/guide/en/elasticsearch/reference/current/frozen-indices.html)上，全局序号在每次搜索后都会被丢弃，并在需要时重新构建。 这意味着`eager_global_ordinals`不应用于冻结索引：这将导致在每次搜索时重新加载全局序数。 相反，在冻结之前，应将索引强制合并到单个段。 这样可以避免完全建立全局序号（更多细节可以在下一节中找到）。
+
+
+
+## 1.3 避免global ordinal加载
+
+通常，就其加载时间和内存使用而言，全局序号不会带来很大的开销。 但是，对于具有大碎片的索引，或者如果字段包含大量唯一项值，则加载全局序号可能会很昂贵。 因为全局序号为分片上的所有分段提供了统一的映射，所以当新的分段变为可见时，还需要完全重建它们。
+
+在某些情况下，可以完全避免全局序数加载：
+
+- term，sampler和significant_terms聚合支持参数[execution_hint](https://www.elastic.co/guide/en/elasticsearch/reference/current/search-aggregations-bucket-terms-aggregation.html#search-aggregations-bucket-terms-aggregation-execution-hint)，该参数有助于控制如何收集存储桶。 它默认为global_ordinals，但可以设置为映射以直接使用术语值。
+- 如果某个分片已被[fore-merged](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-forcemerge.html)为单个片段，则该分片的序号对于该分片已经是全局的。 在这种情况下，Elasticsearch不需要构建全局序数映射，并且使用全局序数不会产生额外的开销。 请注意，出于性能方面的考虑，您只应强制合并一个索引，以后再也不会写入该索引。
+
