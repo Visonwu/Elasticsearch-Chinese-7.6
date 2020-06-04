@@ -87,3 +87,5 @@ GET my_index/_search
 ## 1.1 限制
 
 即使使用date_nanos字段，聚合仍以毫秒为单位。
+
+ 
